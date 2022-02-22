@@ -6,17 +6,17 @@ import pytorch_lightning as pl
 import torch
 from data import SquadDataset
 from torch.utils.data import DataLoader
+from pytorch_lightning.loggers import WandbLogger
 
 
 def main():
     hparams = {
-        'lr': 0.001,
-        'max_seq_length': 128,
-        'batch_size': 8,
+        'lr': 5e-5,
+        'batch_size': 14,
         'num_workers': 4,
         'num_labels': 2,
         'hidden_size': 768,
-        'num_train_epochs': 3,
+        'num_train_epochs': 4,
         'bert_model': 'bert-base-uncased',
     }
     train_encodings = torch.load("./squad/train_encodings")
@@ -31,10 +31,12 @@ def main():
     del train_encodings
     del val_encodings
     model = QAModelBert(hparams, hparams['bert_model'])
-
-    trainer = pl.Trainer(gpus=1, max_epochs=hparams['num_train_epochs'])
-    trainer.fit(model, train_loader, val_loader)
-
+    litModel = PLQAModel(model, hparams)
+    # Logger
+    wandb_logger = WandbLogger(project="bert-squad", entity="gustavhartz")
+    
+    trainer = pl.Trainer(gpus=2, max_epochs=hparams['num_train_epochs'], logger=wandb_logger, strategy='dp')
+    trainer.fit(litModel, train_loader, val_loader)
     torch.save(model.model, "model.model")
 
 
