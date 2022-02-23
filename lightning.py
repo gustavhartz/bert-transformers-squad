@@ -1,7 +1,6 @@
 
 import torch
 import pytorch_lightning as pl
-import wandb
 # simple pytorch training loop using tqdm to show progress
 
 
@@ -11,10 +10,10 @@ class PLQAModel(pl.LightningModule):
         self.hparams.update(hparams)
         self.model = model
         self.save_hyperparameters()
-        
+
     def forward(self, x):
         # in lightning, forward defines the prediction/inference actions
-        batch=x
+        batch = x
         input_ids = batch['input_ids']
         attention_mask = batch['attention_mask']
         start_positions = batch['start_positions']
@@ -31,7 +30,7 @@ class PLQAModel(pl.LightningModule):
         loss = outputs[0]
         self.log("train_loss", loss)
 
-        return {"loss": loss, "outputs":outputs[1]}
+        return {'loss': loss, 'pred': outputs[1]}
 
     def validation_step(self, batch, batch_idx):
         input_ids = batch['input_ids']
@@ -44,23 +43,30 @@ class PLQAModel(pl.LightningModule):
         self.log(
             "val_loss",
             loss,
-            on_epoch=True
         )
         # Log text examples
-        return {"loss": loss, "outputs":outputs[1]}
+        return {'loss': loss, 'pred': outputs[1]}
 
     def training_epoch_end(self, outputs):
         ct, _sum = 0, 0
         for pred in outputs:
-            _sum += pred["loss"]
+            _sum += pred['loss'].item()
             ct += 1
+        self.log(
+            "epoch_train_loss",
+            _sum / ct,
+        )
         return _sum / ct
-    
+
     def validation_epoch_end(self, outputs):
         ct, _sum = 0, 0
         for pred in outputs:
-            _sum += pred["loss"]
+            _sum += pred['loss'].item()
             ct += 1
+        self.log(
+            "epoch_val_loss",
+            _sum / ct,
+        )
         return _sum / ct
 
     def configure_optimizers(self):

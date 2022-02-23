@@ -11,57 +11,84 @@ from pytorch_lightning.callbacks import Callback
 from transformers import BertTokenizerFast
 
 # Not tested
+
+
 class LogTextSamplesCallback(Callback):
-    def on_training_batch_end(
-            self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx):
-            """Called when the validation batch ends."""
+    def on_init_start(self, trainer):
+        print("Starting to init trainer!")
 
-            # `outputs` comes from `LightningModule.validation_step`
-            # which corresponds to our model predictions in this case
+    def on_init_end(self, trainer):
+        print("trainer is init now")
 
-            # Let's log 20 sample image predictions from first batch
-            if batch_idx == 0:
-                wandb_logger=trainer.logger
-                tokenizer = pl_module.tokenizer
-                questions = [tokenizer.decode(x['input_ids'][x['token_type_ids'].nonzero().squeeze()]) for x in batch]
-                answers = [tokenizer.decode(x['input_ids'][x['start_positions']:x['end_positions']]) for x in batch]
-                start_pred = torch.argmax(outputs[1], dim=1)
-                end_pred = torch.argmax(outputs[2], dim=1)
-                preds = [tokenizer.decode(x[2][x[0]:x[1]]) if x[0]<x[1] else "fes" for x in zip(start_pred,end_pred, batch['input_ids']) ]
-                # Option 2: log predictions as a Table
-                columns = ['question', 'answer', 'prediction']
-                data = [questions,answers,preds]
-                wandb_logger.log_text(key='traning_predicition_sample', columns=columns, data=data)
+    def on_train_end(self, trainer, pl_module):
+        print("do something when training ends")
+
+    def on_train_batch_end(
+            self, trainer, pl_module, outputs, batch, batch_idx):
+        """Called when the validation batch ends."""
+
+        # Output on the first batch end or every n steps
+        if (batch_idx == 0) or (batch_idx % hparams['log_text_every_n_batch'] == 0):
+            wandb_logger = pl_module.logger
+            tokenizer = BertTokenizerFast.from_pretrained(
+                hparams['bert_model'])
+            # Make iterable and reusable where each row consitutes a set of values
+            batch_values = list(zip(
+                batch['input_ids'], batch['token_type_ids'], batch['start_positions'], batch['end_positions']))
+            # Non zero values correspond to the seperation
+            # https://huggingface.co/docs/transformers/model_doc/bert#transformers.BertTokenizer
+            questions = [tokenizer.decode(
+                x[0][x[1].nonzero().squeeze()]) for x in batch_values]
+            answers = [tokenizer.decode(x[0][x[2]:x[3]]) for x in batch_values]
+
+            # Only top 1 prediction
+            print("OP")
+            print(type(outputs))
+            print(len(outputs))
+            start_pred = torch.argmax(outputs[1], dim=1)
+            end_pred = torch.argmax(outputs[2], dim=1)
+            # decode
+            preds_text = [tokenizer.decode(x[2][x[0]:x[1]]) if x[0] < x[1] else "fes" for x in zip(
+                start_pred, end_pred, batch['input_ids'])]
+
+            columns = ['question', 'answer', 'prediction']
+            data = [questions, answers, preds_text]
+            wandb_logger.log_text(
+                key='traning_predicition_sample', columns=columns, data=data)
+
 
 def main():
     global hparams
     hparams = {
         'lr': 5e-5,
-        'batch_size': 16,
-        'num_workers': 4,
+        'batch_size': 8,
+        'num_workers': 2,
         'num_labels': 2,
         'hidden_size': 768,
         'num_train_epochs': 4,
         'bert_model': 'bert-base-uncased',
+        'log_text_every_n_batch': 10
     }
     train_encodings = torch.load("./squad/train_encodings")
     val_encodings = torch.load("./squad/val_encodings")
     train_dataset = SquadDataset(train_encodings)
     val_dataset = SquadDataset(val_encodings)
-    
+
     wandb_logger = WandbLogger(project="bert-squad", entity="gustavhartz")
-    
+
     print("Batch size", hparams.get("batch_size"))
     train_loader = DataLoader(
         train_dataset, batch_size=hparams.get("batch_size"), shuffle=True, num_workers=hparams.get('num_workers'))
     val_loader = DataLoader(
         val_dataset, batch_size=hparams.get("batch_size"), shuffle=True, num_workers=hparams.get('num_workers'))
-    
+
     del train_encodings
     del val_encodings
     model = QAModelBert(hparams, hparams['bert_model'])
-    litModel = PLQAModel(model, hparams)    
-    trainer = pl.Trainer(gpus=2, max_epochs=hparams['num_train_epochs'], logger=wandb_logger, strategy='dp')
+    litModel = PLQAModel(model, hparams)
+    #trainer = pl.Trainer(gpus=2, max_epochs=hparams['num_train_epochs'], logger=wandb_logger, strategy='ddp', callbacks=[LogTextSamplesCallback()])
+    trainer = pl.Trainer(
+        gpus=2, max_epochs=hparams['num_train_epochs'], strategy='ddp')
     trainer.fit(litModel, train_loader, val_loader)
     torch.save(model.model, "model.model")
 
