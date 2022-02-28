@@ -1,6 +1,8 @@
 
 import torch
 import pytorch_lightning as pl
+import wandb
+import random
 # simple pytorch training loop using tqdm to show progress
 
 
@@ -29,8 +31,7 @@ class PLQAModel(pl.LightningModule):
                              start_positions=start_positions, end_positions=end_positions)
         loss = outputs[0]
         self.log("train_loss", loss)
-
-        return {'loss': loss, 'pred': outputs[1]}
+        return {'loss': loss, 'pred': [outputs[1], outputs[2]]}
 
     def validation_step(self, batch, batch_idx):
         input_ids = batch['input_ids']
@@ -45,7 +46,7 @@ class PLQAModel(pl.LightningModule):
             loss,
         )
         # Log text examples
-        return {'loss': loss, 'pred': outputs[1]}
+        return {'loss': loss, 'pred': [outputs[1], outputs[2]]}
 
     def training_epoch_end(self, outputs):
         ct, _sum = 0, 0
