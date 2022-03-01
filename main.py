@@ -40,14 +40,14 @@ class LogTextSamplesCallback(Callback):
             start_pred = torch.argmax(outputs['pred'][0], dim=1)
             end_pred = torch.argmax(outputs['pred'][1], dim=1)
             # decode
-            preds_text = [tokenizer.decode(x[2][x[0]:x[1]]) if x[0] < x[1] else "fes" for x in zip(
+            preds_text = [tokenizer.decode(x[2][x[0]:x[1]]) if x[0] < x[1] else "[END BEFORE START]" for x in zip(
                 start_pred, end_pred, batch['input_ids'])]
             columns = ['question', 'answer',
                        'prediction', 'start_pos', 'end_pos']
             data = list(
                 zip(questions, answers, preds_text, start_pred, end_pred))
             wandb_logger.log_text(
-                key='traning_predicition_sample', columns=columns, data=data)
+                key='train_pred_sample', columns=columns, data=data)
 
     def on_validation_batch_end(
             self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx):
@@ -78,21 +78,21 @@ class LogTextSamplesCallback(Callback):
             data = list(
                 zip(questions, answers, preds_text, start_pred, end_pred))
             wandb_logger.log_text(
-                key='valid_predicition_sample', columns=columns, data=data)
+                key='valid_pred_sample', columns=columns, data=data)
 
 
 def main():
     global hparams
     hparams = {
-        'lr': 5e-5,
+        'lr': 3e-5,
         'batch_size': 8,
-        'num_workers': 3,
+        'num_workers': 5,
         'num_labels': 2,
         'hidden_size': 768,
         'num_train_epochs': 4,
         'bert_model': 'bert-base-uncased',
-        'log_text_every_n_batch': 10,
-        'log_text_every_n_batch_valid': 3
+        'log_text_every_n_batch': 30,
+        'log_text_every_n_batch_valid': 10
     }
     train_encodings = torch.load("./squad/train_encodings")
     val_encodings = torch.load("./squad/val_encodings")
@@ -100,6 +100,12 @@ def main():
     val_dataset = SquadDataset(val_encodings)
 
     wandb_logger = WandbLogger(project="bert-squad", entity="gustavhartz")
+    # For subset of data
+    if False:
+        import torch.utils.data as data_utils
+        indices = torch.arange(10000)
+        train_dataset = data_utils.Subset(train_dataset, indices)
+        val_dataset = data_utils.Subset(val_dataset, indices)
 
     print("Batch size", hparams.get("batch_size"))
     train_loader = DataLoader(
@@ -110,7 +116,9 @@ def main():
     del train_encodings
     del val_encodings
     model = QAModelBert(hparams, hparams['bert_model'])
-    litModel = PLQAModel(model, hparams)
+    tokenizer = BertTokenizerFast.from_pretrained(
+        hparams['bert_model'])
+    litModel = PLQAModel(model, hparams, tokenizer)
     trainer = pl.Trainer(gpus=2, max_epochs=hparams['num_train_epochs'],
                          logger=wandb_logger, strategy='ddp', callbacks=[LogTextSamplesCallback()])
     trainer.fit(litModel, train_loader, val_loader)
